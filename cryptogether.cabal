@@ -3,13 +3,13 @@ version:         0.1
 license:         BSD3
 license-file:    LICENSE
 author:          dan corson <danl@alum.mit.edu>
-synopsis:        <syn>
+synopsis:        safe resizing encrypted archive that hides metadata
 build-type:      Simple
-build-depends:   base
+build-depends:   AES, SHA2, base >= 4, bytestring, cereal, containers, derive,
+                 directory, filepath, mwc-random, parallel, random, unix,
+                 utf8-string, vector, FileManip
+ghc-options:     -Wall
 
 executable:      cryptogether
 main-is:         Main.hs
-hs-source-dirs:  src
-
-exposed-modules: cryptogether
 hs-source-dirs:  src

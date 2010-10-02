@@ -1,0 +1,71 @@
+cryptogether currently works for me but is experimental and could
+change in the future.
+
+cryptogether allows you to store several secret files in a resizable
+archive with a single key.  it aims to be a safe and simple, but
+sufficient for most personal file hiding.  the total size of the
+archive is not hidden (but could be by adding a large blank file to
+the archive).  the number of files, the individual file sizes, and the
+filenames are hidden.  (more hidden depending on the padding of the
+index file: if you don't pad your index file and an adversary knows
+that and knows the size of this file, they will know something about
+the _total_ size of all the filenames and file lengths.)
+
+note that if you want to move a file from unencrypted media to a
+cryptogether archive, you should add the file to the archive and then
+use a program like "wipe" to (hopefully) irrecovably remove the
+original from the original media.  "rm" typically leaves the original
+data intact.
+
+initial version limitations:
+- note that currently storing each file of size less than 10MB uses
+  10MB (tail-combining is not yet implemented).
+- no padding of index file
+
+limitations:
+- cryptogether performs no compression.  files can be compressed
+  before they are put in the archive.
+- file permissions are not remembered.  the goal of cryptogether is to
+  be a safe and simple way to store personal secret data without the
+  advanced configuration and more extreme information-hiding possible
+  with a block device or such.  it is not intended for scenarios where
+  multi-user info tracking is necessary.
+- cryptogether won't store empty directories.
+
+alternatives:
+- archive which supports non-compressed encryption (like 7z):
+  - more prone to full-archive corruption during crash?
+    - i was _adding_ a large file to a large archive with 7z and the
+      process died in the middle and the entire archive was corrupted.
+    - a design goal of cryptogether is to minimize the chance of
+      full-archive corruption (while preserving metadata secrecy).
+  - more prone to full-archive corruption?
+    - cryptogether simply places the encrypted files one after the
+      other in the encrypted data file.  a single byte error in that
+      file will only corrupt a single file in the archive.
+    - it is true that a single byte error in the encrypted index file
+      will corrupt the entire archive.  however, this file is smaller
+      and can be backed-up more easily.
+- EncFS:
+  - individual file sizes are exposed
+- use an encrypted block device:
+  - resizing is a dangerous hassle?
+- encrypt a tar file:
+  - you have to decrypt the entire file each time?
+  - tar has slow seeking, but that's is fine for many cases?
+
+architecture:
+- one file for encrypted index.  this file contains a map; for each
+  filename, we have the list of data chunks making up the file data.
+- one set of encrypted data main chunks.  each chunk is 10MB.  each
+  chunk is from only one file.
+- one set of encrypted data tails.  not implemented currently.
+
+future:
+- could make a fuse wrapper for convenience?
+- kerberos integration for password-reuse?
+
+notes:
+- extracting large files takes longer than expected?  strictness issue?
+  50M -> add 1.7s, extract 1.1s
+  1G -> add 17s (ok), extract 33s (a little long..?)
