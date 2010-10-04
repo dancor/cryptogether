@@ -8,8 +8,9 @@ archive is not hidden (but could be by adding a large blank file to
 the archive).  the number of files, the individual file sizes, and the
 filenames are hidden.  (more hidden depending on the padding of the
 index file: if you don't pad your index file and an adversary knows
-that and knows the size of this file, they will know something about
-the _total_ size of all the filenames and file lengths.)
+that and knows the size of this file, they probably know one
+particular linear combination of [sum of filename length sizes] and
+[number of files].)
 
 note that if you want to move a file from unencrypted media to a
 cryptogether archive, you should add the file to the archive and then
