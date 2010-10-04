@@ -9,7 +9,7 @@ the archive).  the number of files, the individual file sizes, and the
 filenames are hidden.  (more hidden depending on the padding of the
 index file: if you don't pad your index file and an adversary knows
 that and knows the size of this file, they probably know one
-particular linear combination of [sum of filename length sizes] and
+particular linear combination of [sum of filename lengths] and
 [number of files].)
 
 note that if you want to move a file from unencrypted media to a
