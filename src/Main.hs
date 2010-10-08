@@ -48,15 +48,26 @@ iv0 = BS.pack $ replicate 16 0
 strongHash :: PwBytes -> BS.ByteString -> Hash
 strongHash pw salt = iterate (hash SHA256) (pw `BS.append` salt) !! 65535
 
-withPW :: (BS.ByteString -> IO a) -> IO a
-withPW f = do
+withPw :: Bool -> (BS.ByteString -> IO a) -> IO a
+withPw verify f = do
   hSetEcho stdin False
-  putStr "password: "
-  hFlush stdout
-  encKey <- BS.pack . U8.encode <$> getLine
-  hSetEcho stdin True
-  putStrLn ""
-  f encKey
+  hPutStr stderr "password: "
+  hFlush stderr
+  pw <- getLine
+  hPutStrLn stderr ""
+  let
+    fin = hSetEcho stdin True >> f (BS.pack $ U8.encode pw)
+  if verify
+    then do
+      hPutStr stderr "verify: "
+      hFlush stderr
+      pw2 <- getLine
+      hPutStrLn stderr ""
+      if pw == pw2 then fin
+        else
+          hPutStrLn stderr "Passwords do not match." >> hFlush stderr >>
+          withPw True f
+    else fin
 
 withLock :: FilePath -> IO a -> IO a
 withLock dir f = do
@@ -72,8 +83,8 @@ ifUnlocked dir f = do
   when lockExists $ error "Lock file exists."
   f
 
-saltPW :: FilePath -> PwBytes -> IO Hash
-saltPW dir pwBytes = strongHash pwBytes <$> BS.readFile (dir </> "salt")
+saltPw :: FilePath -> PwBytes -> IO Hash
+saltPw dir pwBytes = strongHash pwBytes <$> BS.readFile (dir </> "salt")
 
 createSalt :: FilePath -> PwBytes -> IO ()
 createSalt dir pwBytes = do
@@ -82,31 +93,27 @@ createSalt dir pwBytes = do
   BS.writeFile (dir </> "salt") salt
 
 arcAddFile :: FilePath -> PwBytes -> FilePath -> IO ()
-arcAddFile dir pwBytes file = do
-  doesDirectoryExist dir >>= \ t -> unless t $ do
-    createDirectory dir
-    createSalt dir pwBytes
-  withLock dir $ do
-    encKey <- saltPW dir pwBytes
-    putStrLn $ "Adding " ++ show file
-    index <- readIndex dir encKey
-    when (isJust . M.lookup file $ fileData index) $
-      error "Filename already exists in archive."
-    d <- BSL.readFile file
-    chunks <- makeChunks dir $ crypt CTR encKey iv0 Encrypt d
-    writeIndex dir encKey $
-      index {fileData = M.insert file chunks (fileData index)}
+arcAddFile dir pwBytes file = withLock dir $ do
+  encKey <- saltPw dir pwBytes
+  putStrLn $ "Adding " ++ show file
+  index <- readIndex dir encKey
+  when (isJust . M.lookup file $ fileData index) $
+    error "Filename already exists in archive."
+  d <- BSL.readFile file
+  chunks <- makeChunks dir $ crypt CTR encKey iv0 Encrypt d
+  writeIndex dir encKey $
+    index {fileData = M.insert file chunks (fileData index)}
 
 arcList :: FilePath -> PwBytes -> IO ()
 arcList dir pwBytes = ifUnlocked dir $ do
-  encKey <- saltPW dir pwBytes
+  encKey <- saltPw dir pwBytes
   index <- readIndex dir encKey
   putStr . unlines . map (\ (k, v) -> show k ++ " " ++ show (chunksToSize v)) .
     M.toList $ fileData index
 
 arcExtractFile :: FilePath -> PwBytes -> FilePath -> IO ()
 arcExtractFile dir pwBytes file = do
-  encKey <- saltPW dir pwBytes
+  encKey <- saltPw dir pwBytes
   index <- readIndex dir encKey
   putStrLn $ "Extracting " ++ show file
   doesFileExist file >>= \ t ->
@@ -118,7 +125,7 @@ arcExtractFile dir pwBytes file = do
 
 arcRemoveFile :: FilePath -> PwBytes -> FilePath -> IO ()
 arcRemoveFile dir pwBytes file = withLock dir $ do
-  encKey <- saltPW dir pwBytes
+  encKey <- saltPw dir pwBytes
   index <- readIndex dir encKey
   case M.lookup file $ fileData index of
     Nothing -> error "Filename doesn't exist in archive."
@@ -188,9 +195,10 @@ chunksToSize [0] = 0
 chunksToSize cs = chunkSize * (fromIntegral (length cs) - 2) + last cs
 
 lookCheck :: Bool -> FilePath -> IO ()
-lookCheck mustExist dir = do
+lookCheck shouldExist dir = do
   doesDirectoryExist dir >>= \ t -> if t
     then do
+      unless shouldExist . error $ show dir ++ " already exists."
       let
         notArc = error $ show dir ++ " is not a " ++ myName ++ " archive."
       doesFileExist (dir </> "index") >>= \ t2 -> unless t2 notArc
@@ -198,27 +206,45 @@ lookCheck mustExist dir = do
     else do
       doesFileExist dir >>= \ t -> when t (error $
         show dir ++ " is a file, not a " ++ myName ++ " archive directory.")
-      when mustExist . error $ show dir ++ " does not exist."
+      when shouldExist . error $ show dir ++ " doesn't exist."
+
+binOrM :: IO Bool -> IO Bool -> IO Bool
+binOrM a b = a >>= \ r -> if r then return True else b
+
+binAndM :: IO Bool -> IO Bool -> IO Bool
+binAndM a b = a >>= \ r -> if r then b else return False
+
+andM :: [IO Bool] -> IO Bool
+andM = join . foldM (\ a b -> return $ binAndM a b) (return True)
+
+filesRec :: [FilePath] -> IO [FilePath]
+filesRec files = do
+  andM $ map (\ f -> binOrM (doesFileExist f) (doesDirectoryExist f)) files
+  nub . concat <$>
+    mapM (SFF.find SFF.always $ SFF.fileType SFF./=? SFF.Directory) files
 
 main :: IO ()
 main = do
   args <- getArgs
   let
     usage = error "Command usage incorrect."
+    addFiles dir pwBytes = (mapM_ (arcAddFile dir pwBytes) =<<) . filesRec
   case args of
+    "c":dir:[] -> usage
+    "c":dir:files -> lookCheck False dir >> withPw True (\ pwBytes -> do
+      createDirectory dir
+      createSalt dir pwBytes
+      addFiles dir pwBytes files
+      )
     "a":dir:[] -> usage
-    "a":dir:files -> do
-      lookCheck False dir
-      fs <- nub . concat <$>
-        mapM (SFF.find SFF.always $ SFF.fileType SFF./=? SFF.Directory) files
-      withPW $ \ encKey -> mapM_ (arcAddFile dir encKey) fs
-    "l":dir:[] -> lookCheck True dir >> withPW (arcList dir)
+    "a":dir:files -> lookCheck True dir >> withPw False (\ pwBytes ->
+      addFiles dir pwBytes files)
+    "l":dir:[] -> lookCheck True dir >> withPw False (arcList dir)
     "x":dir:[] -> usage
-    "x":dir:files -> do
-      lookCheck True dir
-      withPW $ \ encKey -> mapM_ (arcExtractFile dir encKey) files
+    "x":dir:files -> lookCheck True dir >> withPw False (\ pwBytes ->
+      -- todo: directory extract/remove
+      mapM_ (arcExtractPath dir pwBytes) files)
     "r":dir:[] -> usage
-    "r":dir:files -> do
-      lookCheck True dir
-      withPW $ \ encKey -> mapM_ (arcRemoveFile dir encKey) files
+    "r":dir:files -> lookCheck True dir >> withPw False (\ pwBytes ->
+      mapM_ (arcRemoveFile dir pwBytes) files)
     _ -> usage
